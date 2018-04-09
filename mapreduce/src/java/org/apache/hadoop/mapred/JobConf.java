@@ -24,16 +24,13 @@ import java.io.IOException;
 import java.net.URL;
 import java.net.URLDecoder;
 import java.util.Enumeration;
-import java.util.regex.Pattern;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.mapreduce.filecache.DistributedCache;
+import org.apache.hadoop.filecache.DistributedCache;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
 
 import org.apache.hadoop.io.*;
@@ -44,11 +41,8 @@ import org.apache.hadoop.mapred.lib.IdentityReducer;
 import org.apache.hadoop.mapred.lib.HashPartitioner;
 import org.apache.hadoop.mapred.lib.KeyFieldBasedComparator;
 import org.apache.hadoop.mapred.lib.KeyFieldBasedPartitioner;
-import org.apache.hadoop.mapreduce.MRConfig;
-import org.apache.hadoop.mapreduce.util.ConfigUtil;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.Tool;
-import org.apache.log4j.Level;
 
 /** 
  * A map/reduce job configuration.
@@ -105,249 +99,40 @@ import org.apache.log4j.Level;
  * @see ClusterStatus
  * @see Tool
  * @see DistributedCache
+ * @deprecated Use {@link Configuration} instead
  */
-@InterfaceAudience.Public
-@InterfaceStability.Stable
+@Deprecated
 public class JobConf extends Configuration {
   
   private static final Log LOG = LogFactory.getLog(JobConf.class);
 
   static{
-    ConfigUtil.loadResources();
+    Configuration.addDefaultResource("mapred-default.xml");
+    Configuration.addDefaultResource("mapred-site.xml");
   }
-
-  /**
-   * @deprecated Use {@link #MAPRED_JOB_MAP_MEMORY_MB_PROPERTY} and
-   * {@link #MAPRED_JOB_REDUCE_MEMORY_MB_PROPERTY}
-   */
-  @Deprecated
-  public static final String MAPRED_TASK_MAXVMEM_PROPERTY =
-    "mapred.task.maxvmem";
-
-  /**
-   * @deprecated 
-   */
-  @Deprecated
-  public static final String UPPER_LIMIT_ON_TASK_VMEM_PROPERTY =
-    "mapred.task.limit.maxvmem";
-
-  /**
-   * @deprecated
-   */
-  @Deprecated
-  public static final String MAPRED_TASK_DEFAULT_MAXVMEM_PROPERTY =
-    "mapred.task.default.maxvmem";
-
-  /**
-   * @deprecated
-   */
-  @Deprecated
-  public static final String MAPRED_TASK_MAXPMEM_PROPERTY =
-    "mapred.task.maxpmem";
 
   /**
    * A value which if set for memory related configuration options,
    * indicates that the options are turned off.
    */
   public static final long DISABLED_MEMORY_LIMIT = -1L;
-
-  /**
-   * Property name for the configuration property mapreduce.cluster.local.dir
-   */
-  public static final String MAPRED_LOCAL_DIR_PROPERTY = MRConfig.LOCAL_DIR;
-
+  
   /**
    * Name of the queue to which jobs will be submitted, if no queue
    * name is mentioned.
    */
   public static final String DEFAULT_QUEUE_NAME = "default";
 
-  static final String MAPRED_JOB_MAP_MEMORY_MB_PROPERTY = 
-      JobContext.MAP_MEMORY_MB;
+  static final String MAPRED_JOB_MAP_MEMORY_MB_PROPERTY =
+      "mapred.job.map.memory.mb";
 
   static final String MAPRED_JOB_REDUCE_MEMORY_MB_PROPERTY =
-    JobContext.REDUCE_MEMORY_MB;
+      "mapred.job.reduce.memory.mb";
 
-  /** Pattern for the default unpacking behavior for job jars */
-  public static final Pattern UNPACK_JAR_PATTERN_DEFAULT =
-    Pattern.compile("(?:classes/|lib/).*");
-
-  /**
-   * Configuration key to set the java command line options for the child
-   * map and reduce tasks.
-   * 
-   * Java opts for the task tracker child processes.
-   * The following symbol, if present, will be interpolated: @taskid@. 
-   * It is replaced by current TaskID. Any other occurrences of '@' will go 
-   * unchanged.
-   * For example, to enable verbose gc logging to a file named for the taskid in
-   * /tmp and to set the heap maximum to be a gigabyte, pass a 'value' of:
-   *          -Xmx1024m -verbose:gc -Xloggc:/tmp/@taskid@.gc
-   * 
-   * The configuration variable {@link #MAPRED_TASK_ULIMIT} can be used to 
-   * control the maximum virtual memory of the child processes.
-   * 
-   * The configuration variable {@link #MAPRED_TASK_ENV} can be used to pass 
-   * other environment variables to the child processes.
-   * 
-   * @deprecated Use {@link #MAPRED_MAP_TASK_JAVA_OPTS} or 
-   *                 {@link #MAPRED_REDUCE_TASK_JAVA_OPTS}
-   */
-  @Deprecated
-  public static final String MAPRED_TASK_JAVA_OPTS = "mapred.child.java.opts";
-  
-  /**
-   * Configuration key to set the java command line options for the map tasks.
-   * 
-   * Java opts for the task tracker child map processes.
-   * The following symbol, if present, will be interpolated: @taskid@. 
-   * It is replaced by current TaskID. Any other occurrences of '@' will go 
-   * unchanged.
-   * For example, to enable verbose gc logging to a file named for the taskid in
-   * /tmp and to set the heap maximum to be a gigabyte, pass a 'value' of:
-   *          -Xmx1024m -verbose:gc -Xloggc:/tmp/@taskid@.gc
-   * 
-   * The configuration variable {@link #MAPRED_MAP_TASK_ULIMIT} can be used to 
-   * control the maximum virtual memory of the map processes.
-   * 
-   * The configuration variable {@link #MAPRED_MAP_TASK_ENV} can be used to pass 
-   * other environment variables to the map processes.
-   */
-  public static final String MAPRED_MAP_TASK_JAVA_OPTS = 
-    JobContext.MAP_JAVA_OPTS;
-  
-  /**
-   * Configuration key to set the java command line options for the reduce tasks.
-   * 
-   * Java opts for the task tracker child reduce processes.
-   * The following symbol, if present, will be interpolated: @taskid@. 
-   * It is replaced by current TaskID. Any other occurrences of '@' will go 
-   * unchanged.
-   * For example, to enable verbose gc logging to a file named for the taskid in
-   * /tmp and to set the heap maximum to be a gigabyte, pass a 'value' of:
-   *          -Xmx1024m -verbose:gc -Xloggc:/tmp/@taskid@.gc
-   * 
-   * The configuration variable {@link #MAPRED_REDUCE_TASK_ULIMIT} can be used  
-   * to control the maximum virtual memory of the reduce processes.
-   * 
-   * The configuration variable {@link #MAPRED_REDUCE_TASK_ENV} can be used to 
-   * pass process environment variables to the reduce processes.
-   */
-  public static final String MAPRED_REDUCE_TASK_JAVA_OPTS = 
-    JobContext.REDUCE_JAVA_OPTS;
-  
-  public static final String DEFAULT_MAPRED_TASK_JAVA_OPTS = "-Xmx200m";
-  
-  /**
-   * Configuration key to set the maximum virutal memory available to the child
-   * map and reduce tasks (in kilo-bytes).
-   * 
-   * Note: This must be greater than or equal to the -Xmx passed to the JavaVM
-   *       via {@link #MAPRED_TASK_JAVA_OPTS}, else the VM might not start.
-   * 
-   * @deprecated Use {@link #MAPRED_MAP_TASK_ULIMIT} or 
-   *                 {@link #MAPRED_REDUCE_TASK_ULIMIT}
-   */
-  @Deprecated
-  public static final String MAPRED_TASK_ULIMIT = "mapred.child.ulimit";
-
-  /**
-   * Configuration key to set the maximum virutal memory available to the
-   * map tasks (in kilo-bytes).
-   * 
-   * Note: This must be greater than or equal to the -Xmx passed to the JavaVM
-   *       via {@link #MAPRED_MAP_TASK_JAVA_OPTS}, else the VM might not start.
-   */
-  public static final String MAPRED_MAP_TASK_ULIMIT = JobContext.MAP_ULIMIT;
-  
-  /**
-   * Configuration key to set the maximum virutal memory available to the
-   * reduce tasks (in kilo-bytes).
-   * 
-   * Note: This must be greater than or equal to the -Xmx passed to the JavaVM
-   *       via {@link #MAPRED_REDUCE_TASK_JAVA_OPTS}, else the VM might not start.
-   */
-  public static final String MAPRED_REDUCE_TASK_ULIMIT = 
-    JobContext.REDUCE_ULIMIT;
-
-
-  /**
-   * Configuration key to set the environment of the child map/reduce tasks.
-   * 
-   * The format of the value is <code>k1=v1,k2=v2</code>. Further it can 
-   * reference existing environment variables via <code>$key</code>.
-   * 
-   * Example:
-   * <ul>
-   *   <li> A=foo - This will set the env variable A to foo. </li>
-   *   <li> B=$X:c This is inherit tasktracker's X env variable. </li>
-   * </ul>
-   * 
-   * @deprecated Use {@link #MAPRED_MAP_TASK_ENV} or 
-   *                 {@link #MAPRED_REDUCE_TASK_ENV}
-   */
-  @Deprecated
-  public static final String MAPRED_TASK_ENV = "mapred.child.env";
-
-  /**
-   * Configuration key to set the maximum virutal memory available to the
-   * map tasks.
-   * 
-   * The format of the value is <code>k1=v1,k2=v2</code>. Further it can 
-   * reference existing environment variables via <code>$key</code>.
-   * 
-   * Example:
-   * <ul>
-   *   <li> A=foo - This will set the env variable A to foo. </li>
-   *   <li> B=$X:c This is inherit tasktracker's X env variable. </li>
-   * </ul>
-   */
-  public static final String MAPRED_MAP_TASK_ENV = JobContext.MAP_ENV;
-  
-  /**
-   * Configuration key to set the maximum virutal memory available to the
-   * reduce tasks.
-   * 
-   * The format of the value is <code>k1=v1,k2=v2</code>. Further it can 
-   * reference existing environment variables via <code>$key</code>.
-   * 
-   * Example:
-   * <ul>
-   *   <li> A=foo - This will set the env variable A to foo. </li>
-   *   <li> B=$X:c This is inherit tasktracker's X env variable. </li>
-   * </ul>
-   */
-  public static final String MAPRED_REDUCE_TASK_ENV = JobContext.REDUCE_ENV;
-
-  /**
-   * Configuration key to set the logging {@link Level} for the map task.
-   *
-   * The allowed logging levels are:
-   * OFF, FATAL, ERROR, WARN, INFO, DEBUG, TRACE and ALL.
-   */
-  public static final String MAPRED_MAP_TASK_LOG_LEVEL = 
-    JobContext.MAP_LOG_LEVEL;
-  
-  /**
-   * Configuration key to set the logging {@link Level} for the reduce task.
-   *
-   * The allowed logging levels are:
-   * OFF, FATAL, ERROR, WARN, INFO, DEBUG, TRACE and ALL.
-   */
-  public static final String MAPRED_REDUCE_TASK_LOG_LEVEL = 
-    JobContext.REDUCE_LOG_LEVEL;
-  
-  /**
-   * Default logging level for map/reduce tasks.
-   */
-  public static final Level DEFAULT_LOG_LEVEL = Level.INFO;
-  
   /**
    * Construct a map/reduce job configuration.
    */
-  public JobConf() {
-    checkAndWarnDeprecation();
-  }
+  public JobConf() {}
 
   /** 
    * Construct a map/reduce job configuration.
@@ -356,7 +141,6 @@ public class JobConf extends Configuration {
    */
   public JobConf(Class exampleClass) {
     setJarByClass(exampleClass);
-    checkAndWarnDeprecation();
   }
   
   /**
@@ -366,7 +150,6 @@ public class JobConf extends Configuration {
    */
   public JobConf(Configuration conf) {
     super(conf);
-    checkAndWarnDeprecation();
   }
 
 
@@ -396,7 +179,6 @@ public class JobConf extends Configuration {
   public JobConf(Path config) {
     super();
     addResource(config);
-    checkAndWarnDeprecation();
   }
 
   /** A new map/reduce configuration where the behavior of reading from the
@@ -409,7 +191,6 @@ public class JobConf extends Configuration {
    */
   public JobConf(boolean loadDefaults) {
     super(loadDefaults);
-    checkAndWarnDeprecation();
   }
 
   /**
@@ -417,22 +198,14 @@ public class JobConf extends Configuration {
    * 
    * @return the user jar for the map-reduce job.
    */
-  public String getJar() { return get(JobContext.JAR); }
+  public String getJar() { return get("mapred.jar"); }
   
   /**
    * Set the user jar for the map-reduce job.
    * 
    * @param jar the user jar for the map-reduce job.
    */
-  public void setJar(String jar) { set(JobContext.JAR, jar); }
-
-  /**
-   * Get the pattern for jar contents to unpack on the tasktracker
-   */
-  public Pattern getJarUnpackPattern() {
-    return getPattern(JobContext.JAR_UNPACK_PATTERN, UNPACK_JAR_PATTERN_DEFAULT);
-  }
-
+  public void setJar(String jar) { set("mapred.jar", jar); }
   
   /**
    * Set the job's jar file by finding an example class location.
@@ -447,14 +220,9 @@ public class JobConf extends Configuration {
   }
 
   public String[] getLocalDirs() throws IOException {
-    return getTrimmedStrings(MRConfig.LOCAL_DIR);
+    return getStrings("mapred.local.dir");
   }
 
-  /**
-   * Use MRAsyncDiskService.moveAndDeleteAllVolumes instead.
-   * @see org.apache.hadoop.mapreduce.util.MRAsyncDiskService#cleanupAllVolumes()
-   */
-  @Deprecated
   public void deleteLocalFiles() throws IOException {
     String[] localDirs = getLocalDirs();
     for (int i = 0; i < localDirs.length; i++) {
@@ -474,7 +242,7 @@ public class JobConf extends Configuration {
    * local directories.
    */
   public Path getLocalPath(String pathString) throws IOException {
-    return getLocalPath(MRConfig.LOCAL_DIR, pathString);
+    return getLocalPath("mapred.local.dir", pathString);
   }
 
   /**
@@ -483,7 +251,7 @@ public class JobConf extends Configuration {
    * @return the username
    */
   public String getUser() {
-    return get(JobContext.USER_NAME);
+    return get("user.name");
   }
   
   /**
@@ -492,7 +260,7 @@ public class JobConf extends Configuration {
    * @param user the username for this job.
    */
   public void setUser(String user) {
-    set(JobContext.USER_NAME, user);
+    set("user.name", user);
   }
 
 
@@ -506,7 +274,7 @@ public class JobConf extends Configuration {
    * 
    */
   public void setKeepFailedTaskFiles(boolean keep) {
-    setBoolean(JobContext.PRESERVE_FAILED_TASK_FILES, keep);
+    setBoolean("keep.failed.task.files", keep);
   }
   
   /**
@@ -515,7 +283,7 @@ public class JobConf extends Configuration {
    * @return should the files be kept?
    */
   public boolean getKeepFailedTaskFiles() {
-    return getBoolean(JobContext.PRESERVE_FAILED_TASK_FILES, false);
+    return getBoolean("keep.failed.task.files", false);
   }
   
   /**
@@ -527,7 +295,7 @@ public class JobConf extends Configuration {
    *        task names.
    */
   public void setKeepTaskFilesPattern(String pattern) {
-    set(JobContext.PRESERVE_FILES_PATTERN, pattern);
+    set("keep.task.files.pattern", pattern);
   }
   
   /**
@@ -537,7 +305,7 @@ public class JobConf extends Configuration {
    * @return the pattern as a string, if it was set, othewise null.
    */
   public String getKeepTaskFilesPattern() {
-    return get(JobContext.PRESERVE_FILES_PATTERN);
+    return get("keep.task.files.pattern");
   }
   
   /**
@@ -547,7 +315,7 @@ public class JobConf extends Configuration {
    */
   public void setWorkingDirectory(Path dir) {
     dir = new Path(getWorkingDirectory(), dir);
-    set(JobContext.WORKING_DIR, dir.toString());
+    set("mapred.working.dir", dir.toString());
   }
   
   /**
@@ -556,13 +324,13 @@ public class JobConf extends Configuration {
    * @return the directory name.
    */
   public Path getWorkingDirectory() {
-    String name = get(JobContext.WORKING_DIR);
+    String name = get("mapred.working.dir");
     if (name != null) {
       return new Path(name);
     } else {
       try {
         Path dir = FileSystem.get(this).getWorkingDirectory();
-        set(JobContext.WORKING_DIR, dir.toString());
+        set("mapred.working.dir", dir.toString());
         return dir;
       } catch (IOException e) {
         throw new RuntimeException(e);
@@ -577,14 +345,14 @@ public class JobConf extends Configuration {
    * -1 signifies no limit
    */
   public void setNumTasksToExecutePerJvm(int numTasks) {
-    setInt(JobContext.JVM_NUMTASKS_TORUN, numTasks);
+    setInt("mapred.job.reuse.jvm.num.tasks", numTasks);
   }
   
   /**
    * Get the number of tasks that a spawned JVM should execute
    */
   public int getNumTasksToExecutePerJvm() {
-    return getInt(JobContext.JVM_NUMTASKS_TORUN, 1);
+    return getInt("mapred.job.reuse.jvm.num.tasks", 1);
   }
   
   /**
@@ -662,7 +430,7 @@ public class JobConf extends Configuration {
    * @param compress should the map outputs be compressed?
    */
   public void setCompressMapOutput(boolean compress) {
-    setBoolean(JobContext.MAP_OUTPUT_COMPRESS, compress);
+    setBoolean("mapred.compress.map.output", compress);
   }
   
   /**
@@ -672,7 +440,7 @@ public class JobConf extends Configuration {
    *         <code>false</code> otherwise.
    */
   public boolean getCompressMapOutput() {
-    return getBoolean(JobContext.MAP_OUTPUT_COMPRESS, false);
+    return getBoolean("mapred.compress.map.output", false);
   }
 
   /**
@@ -684,7 +452,7 @@ public class JobConf extends Configuration {
   public void 
   setMapOutputCompressorClass(Class<? extends CompressionCodec> codecClass) {
     setCompressMapOutput(true);
-    setClass(JobContext.MAP_OUTPUT_COMPRESS_CODEC, codecClass, 
+    setClass("mapred.map.output.compression.codec", codecClass, 
              CompressionCodec.class);
   }
   
@@ -699,7 +467,7 @@ public class JobConf extends Configuration {
   public Class<? extends CompressionCodec> 
   getMapOutputCompressorClass(Class<? extends CompressionCodec> defaultValue) {
     Class<? extends CompressionCodec> codecClass = defaultValue;
-    String name = get(JobContext.MAP_OUTPUT_COMPRESS_CODEC);
+    String name = get("mapred.map.output.compression.codec");
     if (name != null) {
       try {
         codecClass = getClassByName(name).asSubclass(CompressionCodec.class);
@@ -719,7 +487,7 @@ public class JobConf extends Configuration {
    * @return the map output key class.
    */
   public Class<?> getMapOutputKeyClass() {
-    Class<?> retv = getClass(JobContext.MAP_OUTPUT_KEY_CLASS, null, Object.class);
+    Class<?> retv = getClass("mapred.mapoutput.key.class", null, Object.class);
     if (retv == null) {
       retv = getOutputKeyClass();
     }
@@ -734,7 +502,7 @@ public class JobConf extends Configuration {
    * @param theClass the map output key class.
    */
   public void setMapOutputKeyClass(Class<?> theClass) {
-    setClass(JobContext.MAP_OUTPUT_KEY_CLASS, theClass, Object.class);
+    setClass("mapred.mapoutput.key.class", theClass, Object.class);
   }
   
   /**
@@ -745,7 +513,7 @@ public class JobConf extends Configuration {
    * @return the map output value class.
    */
   public Class<?> getMapOutputValueClass() {
-    Class<?> retv = getClass(JobContext.MAP_OUTPUT_VALUE_CLASS, null,
+    Class<?> retv = getClass("mapred.mapoutput.value.class", null,
         Object.class);
     if (retv == null) {
       retv = getOutputValueClass();
@@ -761,7 +529,7 @@ public class JobConf extends Configuration {
    * @param theClass the map output value class.
    */
   public void setMapOutputValueClass(Class<?> theClass) {
-    setClass(JobContext.MAP_OUTPUT_VALUE_CLASS, theClass, Object.class);
+    setClass("mapred.mapoutput.value.class", theClass, Object.class);
   }
   
   /**
@@ -770,7 +538,7 @@ public class JobConf extends Configuration {
    * @return the key class for the job output data.
    */
   public Class<?> getOutputKeyClass() {
-    return getClass(JobContext.OUTPUT_KEY_CLASS,
+    return getClass("mapred.output.key.class",
                     LongWritable.class, Object.class);
   }
   
@@ -780,7 +548,7 @@ public class JobConf extends Configuration {
    * @param theClass the key class for the job output data.
    */
   public void setOutputKeyClass(Class<?> theClass) {
-    setClass(JobContext.OUTPUT_KEY_CLASS, theClass, Object.class);
+    setClass("mapred.output.key.class", theClass, Object.class);
   }
 
   /**
@@ -789,8 +557,8 @@ public class JobConf extends Configuration {
    * @return the {@link RawComparator} comparator used to compare keys.
    */
   public RawComparator getOutputKeyComparator() {
-    Class<? extends RawComparator> theClass = getClass(
-      JobContext.KEY_COMPARATOR, null, RawComparator.class);
+    Class<? extends RawComparator> theClass = getClass("mapred.output.key.comparator.class",
+          null, RawComparator.class);
     if (theClass != null)
       return ReflectionUtils.newInstance(theClass, this);
     return WritableComparator.get(getMapOutputKeyClass().asSubclass(WritableComparable.class));
@@ -804,7 +572,7 @@ public class JobConf extends Configuration {
    * @see #setOutputValueGroupingComparator(Class)                 
    */
   public void setOutputKeyComparatorClass(Class<? extends RawComparator> theClass) {
-    setClass(JobContext.KEY_COMPARATOR,
+    setClass("mapred.output.key.comparator.class",
              theClass, RawComparator.class);
   }
 
@@ -825,14 +593,14 @@ public class JobConf extends Configuration {
    */
   public void setKeyFieldComparatorOptions(String keySpec) {
     setOutputKeyComparatorClass(KeyFieldBasedComparator.class);
-    set(KeyFieldBasedComparator.COMPARATOR_OPTIONS, keySpec);
+    set("mapred.text.key.comparator.options", keySpec);
   }
   
   /**
    * Get the {@link KeyFieldBasedComparator} options
    */
   public String getKeyFieldComparatorOption() {
-    return get(KeyFieldBasedComparator.COMPARATOR_OPTIONS);
+    return get("mapred.text.key.comparator.options");
   }
 
   /**
@@ -850,14 +618,14 @@ public class JobConf extends Configuration {
    */
   public void setKeyFieldPartitionerOptions(String keySpec) {
     setPartitionerClass(KeyFieldBasedPartitioner.class);
-    set(KeyFieldBasedPartitioner.PARTITIONER_OPTIONS, keySpec);
+    set("mapred.text.key.partitioner.options", keySpec);
   }
   
   /**
    * Get the {@link KeyFieldBasedPartitioner} options
    */
   public String getKeyFieldPartitionerOption() {
-    return get(KeyFieldBasedPartitioner.PARTITIONER_OPTIONS);
+    return get("mapred.text.key.partitioner.options");
   }
 
   /** 
@@ -868,8 +636,8 @@ public class JobConf extends Configuration {
    * @see #setOutputValueGroupingComparator(Class) for details.  
    */
   public RawComparator getOutputValueGroupingComparator() {
-    Class<? extends RawComparator> theClass = getClass(
-      JobContext.GROUP_COMPARATOR_CLASS, null, RawComparator.class);
+    Class<? extends RawComparator> theClass = getClass("mapred.output.value.groupfn.class", null,
+        RawComparator.class);
     if (theClass == null) {
       return getOutputKeyComparator();
     }
@@ -904,7 +672,7 @@ public class JobConf extends Configuration {
    */
   public void setOutputValueGroupingComparator(
       Class<? extends RawComparator> theClass) {
-    setClass(JobContext.GROUP_COMPARATOR_CLASS,
+    setClass("mapred.output.value.groupfn.class",
              theClass, RawComparator.class);
   }
 
@@ -948,7 +716,7 @@ public class JobConf extends Configuration {
    * @return the value class for job outputs.
    */
   public Class<?> getOutputValueClass() {
-    return getClass(JobContext.OUTPUT_VALUE_CLASS, Text.class, Object.class);
+    return getClass("mapred.output.value.class", Text.class, Object.class);
   }
   
   /**
@@ -957,7 +725,7 @@ public class JobConf extends Configuration {
    * @param theClass the value class for job outputs.
    */
   public void setOutputValueClass(Class<?> theClass) {
-    setClass(JobContext.OUTPUT_VALUE_CLASS, theClass, Object.class);
+    setClass("mapred.output.value.class", theClass, Object.class);
   }
 
   /**
@@ -1108,7 +876,7 @@ public class JobConf extends Configuration {
    *         <code>false</code> otherwise.
    */
   public boolean getMapSpeculativeExecution() { 
-    return getBoolean(JobContext.MAP_SPECULATIVE, true);
+    return getBoolean("mapred.map.tasks.speculative.execution", true);
   }
   
   /**
@@ -1119,7 +887,8 @@ public class JobConf extends Configuration {
    *                             else <code>false</code>.
    */
   public void setMapSpeculativeExecution(boolean speculativeExecution) {
-    setBoolean(JobContext.MAP_SPECULATIVE, speculativeExecution);
+    //setBoolean("mapred.map.tasks.speculative.execution", speculativeExecution);
+    setBoolean("mapred.map.tasks.speculative.execution", true);//Changed by Kartik
   }
 
   /**
@@ -1131,7 +900,7 @@ public class JobConf extends Configuration {
    *         <code>false</code> otherwise.
    */
   public boolean getReduceSpeculativeExecution() { 
-    return getBoolean(JobContext.REDUCE_SPECULATIVE, true);
+    return getBoolean("mapred.reduce.tasks.speculative.execution", true);
   }
   
   /**
@@ -1142,8 +911,10 @@ public class JobConf extends Configuration {
    *                             else <code>false</code>.
    */
   public void setReduceSpeculativeExecution(boolean speculativeExecution) {
-    setBoolean(JobContext.REDUCE_SPECULATIVE, 
-               speculativeExecution);
+    //setBoolean("mapred.reduce.tasks.speculative.execution", 
+    //           speculativeExecution);
+    setBoolean("mapred.reduce.tasks.speculative.execution", 
+               true);//Changed by Kartik
   }
 
   /**
@@ -1152,7 +923,7 @@ public class JobConf extends Configuration {
    * 
    * @return the number of reduce tasks for this job.
    */
-  public int getNumMapTasks() { return getInt(JobContext.NUM_MAPS, 1); }
+  public int getNumMapTasks() { return getInt("mapred.map.tasks", 1); }
   
   /**
    * Set the number of map tasks for this job.
@@ -1179,8 +950,8 @@ public class JobConf extends Configuration {
    * bytes, of input files. However, the {@link FileSystem} blocksize of the 
    * input files is treated as an upper bound for input splits. A lower bound 
    * on the split size can be set via 
-   * <a href="{@docRoot}/../mapred-default.html#mapreduce.input.fileinputformat.split.minsize">
-   * mapreduce.input.fileinputformat.split.minsize</a>.</p>
+   * <a href="{@docRoot}/../mapred-default.html#mapred.min.split.size">
+   * mapred.min.split.size</a>.</p>
    *  
    * <p>Thus, if you expect 10TB of input data and have a blocksize of 128MB, 
    * you'll end up with 82,000 maps, unless {@link #setNumMapTasks(int)} is 
@@ -1192,7 +963,7 @@ public class JobConf extends Configuration {
    * @see FileSystem#getDefaultBlockSize()
    * @see FileStatus#getBlockSize()
    */
-  public void setNumMapTasks(int n) { setInt(JobContext.NUM_MAPS, n); }
+  public void setNumMapTasks(int n) { setInt("mapred.map.tasks", n); }
 
   /**
    * Get configured the number of reduce tasks for this job. Defaults to 
@@ -1200,7 +971,7 @@ public class JobConf extends Configuration {
    * 
    * @return the number of reduce tasks for this job.
    */
-  public int getNumReduceTasks() { return getInt(JobContext.NUM_REDUCES, 1); }
+  public int getNumReduceTasks() { return getInt("mapred.reduce.tasks", 1); }
   
   /**
    * Set the requisite number of reduce tasks for this job.
@@ -1209,8 +980,8 @@ public class JobConf extends Configuration {
    * 
    * <p>The right number of reduces seems to be <code>0.95</code> or 
    * <code>1.75</code> multiplied by (&lt;<i>no. of nodes</i>&gt; * 
-   * <a href="{@docRoot}/../mapred-default.html#mapreduce.tasktracker.reduce.tasks.maximum">
-   * mapreduce.tasktracker.reduce.tasks.maximum</a>).
+   * <a href="{@docRoot}/../mapred-default.html#mapred.tasktracker.reduce.tasks.maximum">
+   * mapred.tasktracker.reduce.tasks.maximum</a>).
    * </p>
    * 
    * <p>With <code>0.95</code> all of the reduces can launch immediately and 
@@ -1236,17 +1007,17 @@ public class JobConf extends Configuration {
    * 
    * @param n the number of reduce tasks for this job.
    */
-  public void setNumReduceTasks(int n) { setInt(JobContext.NUM_REDUCES, n); }
+  public void setNumReduceTasks(int n) { setInt("mapred.reduce.tasks", n); }
   
   /** 
    * Get the configured number of maximum attempts that will be made to run a
-   * map task, as specified by the <code>mapreduce.map.maxattempts</code>
+   * map task, as specified by the <code>mapred.map.max.attempts</code>
    * property. If this property is not already set, the default is 4 attempts.
    *  
    * @return the max number of attempts per map task.
    */
   public int getMaxMapAttempts() {
-    return getInt(JobContext.MAP_MAX_ATTEMPTS, 4);
+    return getInt("mapred.map.max.attempts", 4);
   }
   
   /** 
@@ -1256,18 +1027,18 @@ public class JobConf extends Configuration {
    * @param n the number of attempts per map task.
    */
   public void setMaxMapAttempts(int n) {
-    setInt(JobContext.MAP_MAX_ATTEMPTS, n);
+    setInt("mapred.map.max.attempts", n);
   }
 
   /** 
    * Get the configured number of maximum attempts  that will be made to run a
-   * reduce task, as specified by the <code>mapreduce.reduce.maxattempts</code>
+   * reduce task, as specified by the <code>mapred.reduce.max.attempts</code>
    * property. If this property is not already set, the default is 4 attempts.
    * 
    * @return the max number of attempts per reduce task.
    */
   public int getMaxReduceAttempts() {
-    return getInt(JobContext.REDUCE_MAX_ATTEMPTS, 4);
+    return getInt("mapred.reduce.max.attempts", 4);
   }
   /** 
    * Expert: Set the number of maximum attempts that will be made to run a
@@ -1276,7 +1047,7 @@ public class JobConf extends Configuration {
    * @param n the number of attempts per reduce task.
    */
   public void setMaxReduceAttempts(int n) {
-    setInt(JobContext.REDUCE_MAX_ATTEMPTS, n);
+    setInt("mapred.reduce.max.attempts", n);
   }
   
   /**
@@ -1286,7 +1057,7 @@ public class JobConf extends Configuration {
    * @return the job's name, defaulting to "".
    */
   public String getJobName() {
-    return get(JobContext.JOB_NAME, "");
+    return get("mapred.job.name", "");
   }
   
   /**
@@ -1295,7 +1066,7 @@ public class JobConf extends Configuration {
    * @param name the job's new name.
    */
   public void setJobName(String name) {
-    set(JobContext.JOB_NAME, name);
+    set("mapred.job.name", name);
   }
   
   /**
@@ -1313,7 +1084,6 @@ public class JobConf extends Configuration {
    *
    * @return the session identifier, defaulting to "".
    */
-  @Deprecated
   public String getSessionId() {
       return get("session.id", "");
   }
@@ -1323,7 +1093,6 @@ public class JobConf extends Configuration {
    *
    * @param sessionId the new session id.
    */
-  @Deprecated
   public void setSessionId(String sessionId) {
       set("session.id", sessionId);
   }
@@ -1336,7 +1105,7 @@ public class JobConf extends Configuration {
    * @param noFailures maximum no. of failures of a given job per tasktracker.
    */
   public void setMaxTaskFailuresPerTracker(int noFailures) {
-    setInt(JobContext.MAX_TASK_FAILURES_PER_TRACKER, noFailures);
+    setInt("mapred.max.tracker.failures", noFailures);
   }
   
   /**
@@ -1347,7 +1116,7 @@ public class JobConf extends Configuration {
    * @return the maximum no. of failures of a given job per tasktracker.
    */
   public int getMaxTaskFailuresPerTracker() {
-    return getInt(JobContext.MAX_TASK_FAILURES_PER_TRACKER, 4); 
+    return getInt("mapred.max.tracker.failures", 4); 
   }
 
   /**
@@ -1364,7 +1133,7 @@ public class JobConf extends Configuration {
    *         the job being aborted.
    */
   public int getMaxMapTaskFailuresPercent() {
-    return getInt(JobContext.MAP_FAILURES_MAX_PERCENT, 0);
+    return getInt("mapred.max.map.failures.percent", 0);
   }
 
   /**
@@ -1378,7 +1147,7 @@ public class JobConf extends Configuration {
    *                the job being aborted.
    */
   public void setMaxMapTaskFailuresPercent(int percent) {
-    setInt(JobContext.MAP_FAILURES_MAX_PERCENT, percent);
+    setInt("mapred.max.map.failures.percent", percent);
   }
   
   /**
@@ -1395,7 +1164,7 @@ public class JobConf extends Configuration {
    *         the job being aborted.
    */
   public int getMaxReduceTaskFailuresPercent() {
-    return getInt(JobContext.REDUCE_FAILURES_MAXPERCENT, 0);
+    return getInt("mapred.max.reduce.failures.percent", 0);
   }
   
   /**
@@ -1409,7 +1178,7 @@ public class JobConf extends Configuration {
    *                the job being aborted.
    */
   public void setMaxReduceTaskFailuresPercent(int percent) {
-    setInt(JobContext.REDUCE_FAILURES_MAXPERCENT, percent);
+    setInt("mapred.max.reduce.failures.percent", percent);
   }
   
   /**
@@ -1418,7 +1187,7 @@ public class JobConf extends Configuration {
    * @param prio the {@link JobPriority} for this job.
    */
   public void setJobPriority(JobPriority prio) {
-    set(JobContext.PRIORITY, prio.toString());
+    set("mapred.job.priority", prio.toString());
   }
   
   /**
@@ -1427,7 +1196,7 @@ public class JobConf extends Configuration {
    * @return the {@link JobPriority} for this job.
    */
   public JobPriority getJobPriority() {
-    String prio = get(JobContext.PRIORITY);
+    String prio = get("mapred.job.priority");
     if(prio == null) {
       return JobPriority.NORMAL;
     }
@@ -1440,7 +1209,7 @@ public class JobConf extends Configuration {
    * @return true if some tasks will be profiled
    */
   public boolean getProfileEnabled() {
-    return getBoolean(JobContext.TASK_PROFILE, false);
+    return getBoolean("mapred.task.profile", false);
   }
 
   /**
@@ -1450,7 +1219,7 @@ public class JobConf extends Configuration {
    * @param newValue true means it should be gathered
    */
   public void setProfileEnabled(boolean newValue) {
-    setBoolean(JobContext.TASK_PROFILE, newValue);
+    setBoolean("mapred.task.profile", newValue);
   }
 
   /**
@@ -1462,7 +1231,7 @@ public class JobConf extends Configuration {
    * @return the parameters to pass to the task child to configure profiling
    */
   public String getProfileParams() {
-    return get(JobContext.TASK_PROFILE_PARAMS,
+    return get("mapred.task.profile.params",
                "-agentlib:hprof=cpu=samples,heap=sites,force=n,thread=y," +
                  "verbose=n,file=%s");
   }
@@ -1477,7 +1246,7 @@ public class JobConf extends Configuration {
    * @param value the configuration string
    */
   public void setProfileParams(String value) {
-    set(JobContext.TASK_PROFILE_PARAMS, value);
+    set("mapred.task.profile.params", value);
   }
 
   /**
@@ -1486,8 +1255,8 @@ public class JobConf extends Configuration {
    * @return the task ranges
    */
   public IntegerRanges getProfileTaskRange(boolean isMap) {
-    return getRange((isMap ? JobContext.NUM_MAP_PROFILES : 
-                       JobContext.NUM_REDUCE_PROFILES), "0-2");
+    return getRange((isMap ? "mapred.task.profile.maps" : 
+                       "mapred.task.profile.reduces"), "0-2");
   }
 
   /**
@@ -1497,9 +1266,9 @@ public class JobConf extends Configuration {
    */
   public void setProfileTaskRange(boolean isMap, String newValue) {
     // parse the value to make sure it is legal
-      new Configuration.IntegerRanges(newValue);
-    set((isMap ? JobContext.NUM_MAP_PROFILES : JobContext.NUM_REDUCE_PROFILES), 
-          newValue);
+    new Configuration.IntegerRanges(newValue);
+    set((isMap ? "mapred.task.profile.maps" : "mapred.task.profile.reduces"), 
+        newValue);
   }
 
   /**
@@ -1526,7 +1295,7 @@ public class JobConf extends Configuration {
    * @param mDbgScript the script name
    */
   public void  setMapDebugScript(String mDbgScript) {
-    set(JobContext.MAP_DEBUG_SCRIPT, mDbgScript);
+    set("mapred.map.task.debug.script", mDbgScript);
   }
   
   /**
@@ -1536,7 +1305,7 @@ public class JobConf extends Configuration {
    * @see #setMapDebugScript(String)
    */
   public String getMapDebugScript() {
-    return get(JobContext.MAP_DEBUG_SCRIPT);
+    return get("mapred.map.task.debug.script");
   }
   
   /**
@@ -1563,7 +1332,7 @@ public class JobConf extends Configuration {
    * @param rDbgScript the script name
    */
   public void  setReduceDebugScript(String rDbgScript) {
-    set(JobContext.REDUCE_DEBUG_SCRIPT, rDbgScript);
+    set("mapred.reduce.task.debug.script", rDbgScript);
   }
   
   /**
@@ -1573,7 +1342,7 @@ public class JobConf extends Configuration {
    * @see #setReduceDebugScript(String)
    */
   public String getReduceDebugScript() {
-    return get(JobContext.REDUCE_DEBUG_SCRIPT);
+    return get("mapred.reduce.task.debug.script");
   }
 
   /**
@@ -1585,7 +1354,7 @@ public class JobConf extends Configuration {
    * @see #setJobEndNotificationURI(String)
    */
   public String getJobEndNotificationURI() {
-    return get(JobContext.END_NOTIFICATION_URL);
+    return get("job.end.notification.url");
   }
 
   /**
@@ -1601,11 +1370,10 @@ public class JobConf extends Configuration {
    * 
    * @param uri the job end notification uri
    * @see JobStatus
-   * @see <a href="{@docRoot}/org/apache/hadoop/mapred/JobClient.html#
-   *       JobCompletionAndChaining">Job Completion and Chaining</a>
+   * @see <a href="{@docRoot}/org/apache/hadoop/mapred/JobClient.html#JobCompletionAndChaining">Job Completion and Chaining</a>
    */
   public void setJobEndNotificationURI(String uri) {
-    set(JobContext.END_NOTIFICATION_URL, uri);
+    set("job.end.notification.url", uri);
   }
 
   /**
@@ -1614,9 +1382,9 @@ public class JobConf extends Configuration {
    * <p>
    * When a job starts, a shared directory is created at location
    * <code>
-   * ${mapreduce.cluster.local.dir}/taskTracker/$user/jobcache/$jobid/work/ </code>.
+   * ${mapred.local.dir}/taskTracker/jobcache/$jobid/work/ </code>.
    * This directory is exposed to the users through 
-   * <code>mapreduce.job.local.dir </code>.
+   * <code>job.local.dir </code>.
    * So, the tasks can use this space 
    * as scratch space and share files among them. </p>
    * This value is available as System property also.
@@ -1624,74 +1392,24 @@ public class JobConf extends Configuration {
    * @return The localized job specific shared directory
    */
   public String getJobLocalDir() {
-    return get(JobContext.JOB_LOCAL_DIR);
+    return get("job.local.dir");
   }
 
-  /**
-   * Get memory required to run a map task of the job, in MB.
-   * 
-   * If a value is specified in the configuration, it is returned.
-   * Else, it returns {@link #DISABLED_MEMORY_LIMIT}.
-   * <p/>
-   * For backward compatibility, if the job configuration sets the
-   * key {@link #MAPRED_TASK_MAXVMEM_PROPERTY} to a value different
-   * from {@link #DISABLED_MEMORY_LIMIT}, that value will be used
-   * after converting it from bytes to MB.
-   * @return memory required to run a map task of the job, in MB,
-   *          or {@link #DISABLED_MEMORY_LIMIT} if unset.
-   */
-  public long getMemoryForMapTask() {
-    long value = getDeprecatedMemoryValue();
-    if (value == DISABLED_MEMORY_LIMIT) {
-      value = normalizeMemoryConfigValue(
-                getLong(JobConf.MAPRED_JOB_MAP_MEMORY_MB_PROPERTY,
-                          DISABLED_MEMORY_LIMIT));
-    }
-    return value;
+  long getMemoryForMapTask() {
+    return getLong(JobConf.MAPRED_JOB_MAP_MEMORY_MB_PROPERTY,
+        DISABLED_MEMORY_LIMIT);
   }
 
-  public void setMemoryForMapTask(long mem) {
+  void setMemoryForMapTask(long mem) {
     setLong(JobConf.MAPRED_JOB_MAP_MEMORY_MB_PROPERTY, mem);
   }
 
-  /**
-   * Get memory required to run a reduce task of the job, in MB.
-   * 
-   * If a value is specified in the configuration, it is returned.
-   * Else, it returns {@link #DISABLED_MEMORY_LIMIT}.
-   * <p/>
-   * For backward compatibility, if the job configuration sets the
-   * key {@link #MAPRED_TASK_MAXVMEM_PROPERTY} to a value different
-   * from {@link #DISABLED_MEMORY_LIMIT}, that value will be used
-   * after converting it from bytes to MB.
-   * @return memory required to run a reduce task of the job, in MB,
-   *          or {@link #DISABLED_MEMORY_LIMIT} if unset.
-   */
-  public long getMemoryForReduceTask() {
-    long value = getDeprecatedMemoryValue();
-    if (value == DISABLED_MEMORY_LIMIT) {
-      value = normalizeMemoryConfigValue(
-                getLong(JobConf.MAPRED_JOB_REDUCE_MEMORY_MB_PROPERTY,
-                        DISABLED_MEMORY_LIMIT));
-    }
-    return value;
-  }
-  
-  // Return the value set to the key MAPRED_TASK_MAXVMEM_PROPERTY,
-  // converted into MBs.
-  // Returns DISABLED_MEMORY_LIMIT if unset, or set to a negative
-  // value.
-  private long getDeprecatedMemoryValue() {
-    long oldValue = getLong(MAPRED_TASK_MAXVMEM_PROPERTY, 
+  long getMemoryForReduceTask() {
+    return getLong(JobConf.MAPRED_JOB_REDUCE_MEMORY_MB_PROPERTY,
         DISABLED_MEMORY_LIMIT);
-    oldValue = normalizeMemoryConfigValue(oldValue);
-    if (oldValue != DISABLED_MEMORY_LIMIT) {
-      oldValue /= (1024*1024);
-    }
-    return oldValue;
   }
 
-  public void setMemoryForReduceTask(long mem) {
+  void setMemoryForReduceTask(long mem) {
     setLong(JobConf.MAPRED_JOB_REDUCE_MEMORY_MB_PROPERTY, mem);
   }
 
@@ -1702,7 +1420,7 @@ public class JobConf extends Configuration {
    * @return name of the queue
    */
   public String getQueueName() {
-    return get(JobContext.QUEUE_NAME, DEFAULT_QUEUE_NAME);
+    return get("mapred.job.queue.name", DEFAULT_QUEUE_NAME);
   }
   
   /**
@@ -1711,7 +1429,79 @@ public class JobConf extends Configuration {
    * @param queueName Name of the queue
    */
   public void setQueueName(String queueName) {
-    set(JobContext.QUEUE_NAME, queueName);
+    set("mapred.job.queue.name", queueName);
+  }
+  
+  /**
+   * Get the per-node limit on running maps for the job
+   * 
+   * @return per-node running map limit
+   */
+  public int getMaxMapsPerNode() {
+    return getInt("mapred.max.maps.per.node", -1);
+  }
+  
+  /**
+   * Set the per-node limit on running maps for the job
+   * 
+   * @param limit per-node running map limit
+   */
+  public void setMaxMapsPerNode(int limit) {
+    setInt("mapred.max.maps.per.node", limit);
+  }
+  
+  /**
+   * Get the per-node limit on running reduces for the job
+   * 
+   * @return per-node running reduce limit
+   */
+  public int getMaxReducesPerNode() {
+    return getInt("mapred.max.reduces.per.node", -1);
+  }
+  
+  /**
+   * Set the per-node limit on running reduces for the job
+   * 
+   * @param limit per-node running reduce limit
+   */
+  public void setMaxReducesPerNode(int limit) {
+    setInt("mapred.max.reduces.per.node", limit);
+  }
+  
+  /**
+   * Get the cluster-wide limit on running maps for the job
+   * 
+   * @return cluster-wide running map limit
+   */
+  public int getRunningMapLimit() {
+    return getInt("mapred.running.map.limit", -1);
+  }
+  
+  /**
+   * Set the cluster-wide limit on running maps for the job
+   * 
+   * @param limit cluster-wide running map limit
+   */
+  public void setRunningMapLimit(int limit) {
+    setInt("mapred.running.map.limit", limit);
+  }
+  
+  /**
+   * Get the cluster-wide limit on running reduces for the job
+   * 
+   * @return cluster-wide running reduce limit
+   */
+  public int getRunningReduceLimit() {
+    return getInt("mapred.running.reduce.limit", -1);
+  }
+  
+  /**
+   * Set the cluster-wide limit on running reduces for the job
+   * 
+   * @param limit cluster-wide running reduce limit
+   */
+  public void setRunningReduceLimit(int limit) {
+    setInt("mapred.running.reduce.limit", limit);
   }
   
   /**
@@ -1727,39 +1517,6 @@ public class JobConf extends Configuration {
     return val;
   }
 
-  /**
-   * Compute the number of slots required to run a single map task-attempt
-   * of this job.
-   * @param slotSizePerMap cluster-wide value of the amount of memory required
-   *                       to run a map-task
-   * @return the number of slots required to run a single map task-attempt
-   *          1 if memory parameters are disabled.
-   */
-  int computeNumSlotsPerMap(long slotSizePerMap) {
-    if ((slotSizePerMap==DISABLED_MEMORY_LIMIT) ||
-        (getMemoryForMapTask()==DISABLED_MEMORY_LIMIT)) {
-      return 1;
-    }
-    return (int)(Math.ceil((float)getMemoryForMapTask() / (float)slotSizePerMap));
-  }
-  
-  /**
-   * Compute the number of slots required to run a single reduce task-attempt
-   * of this job.
-   * @param slotSizePerReduce cluster-wide value of the amount of memory 
-   *                          required to run a reduce-task
-   * @return the number of slots required to run a single reduce task-attempt
-   *          1 if memory parameters are disabled
-   */
-  int computeNumSlotsPerReduce(long slotSizePerReduce) {
-    if ((slotSizePerReduce==DISABLED_MEMORY_LIMIT) ||
-        (getMemoryForReduceTask()==DISABLED_MEMORY_LIMIT)) {
-      return 1;
-    }
-    return 
-    (int)(Math.ceil((float)getMemoryForReduceTask() / (float)slotSizePerReduce));
-  }
-  
   /** 
    * Find a jar that contains a class of the same name, if any.
    * It will return a jar file, even if that is not the first thing
@@ -1790,114 +1547,5 @@ public class JobConf extends Configuration {
     }
     return null;
   }
-
-
-  /**
-   * Get the memory required to run a task of this job, in bytes. See
-   * {@link #MAPRED_TASK_MAXVMEM_PROPERTY}
-   * <p/>
-   * This method is deprecated. Now, different memory limits can be
-   * set for map and reduce tasks of a job, in MB. 
-   * <p/>
-   * For backward compatibility, if the job configuration sets the
-   * key {@link #MAPRED_TASK_MAXVMEM_PROPERTY} to a value different
-   * from {@link #DISABLED_MEMORY_LIMIT}, that value is returned. 
-   * Otherwise, this method will return the larger of the values returned by 
-   * {@link #getMemoryForMapTask()} and {@link #getMemoryForReduceTask()}
-   * after converting them into bytes.
-   *
-   * @return Memory required to run a task of this job, in bytes,
-   *          or {@link #DISABLED_MEMORY_LIMIT}, if unset.
-   * @see #setMaxVirtualMemoryForTask(long)
-   * @deprecated Use {@link #getMemoryForMapTask()} and
-   *             {@link #getMemoryForReduceTask()}
-   */
-  @Deprecated
-  public long getMaxVirtualMemoryForTask() {
-    LOG.warn(
-      "getMaxVirtualMemoryForTask() is deprecated. " +
-      "Instead use getMemoryForMapTask() and getMemoryForReduceTask()");
-
-    long value = getLong(MAPRED_TASK_MAXVMEM_PROPERTY, DISABLED_MEMORY_LIMIT);
-    value = normalizeMemoryConfigValue(value);
-    if (value == DISABLED_MEMORY_LIMIT) {
-      value = Math.max(getMemoryForMapTask(), getMemoryForReduceTask());
-      value = normalizeMemoryConfigValue(value);
-      if (value != DISABLED_MEMORY_LIMIT) {
-        value *= 1024*1024;
-      }
-    }
-    return value;
-  }
-
-  /**
-   * Set the maximum amount of memory any task of this job can use. See
-   * {@link #MAPRED_TASK_MAXVMEM_PROPERTY}
-   * <p/>
-   * mapred.task.maxvmem is split into
-   * mapreduce.map.memory.mb
-   * and mapreduce.map.memory.mb,mapred
-   * each of the new key are set
-   * as mapred.task.maxvmem / 1024
-   * as new values are in MB
-   *
-   * @param vmem Maximum amount of virtual memory in bytes any task of this job
-   *             can use.
-   * @see #getMaxVirtualMemoryForTask()
-   * @deprecated
-   *  Use {@link #setMemoryForMapTask(long mem)}  and
-   *  Use {@link #setMemoryForReduceTask(long mem)}
-   */
-  @Deprecated
-  public void setMaxVirtualMemoryForTask(long vmem) {
-    LOG.warn("setMaxVirtualMemoryForTask() is deprecated."+
-      "Instead use setMemoryForMapTask() and setMemoryForReduceTask()");
-    if(vmem != DISABLED_MEMORY_LIMIT && vmem < 0) {
-      setMemoryForMapTask(DISABLED_MEMORY_LIMIT);
-      setMemoryForReduceTask(DISABLED_MEMORY_LIMIT);
-    }
-
-    if(get(JobConf.MAPRED_TASK_MAXVMEM_PROPERTY) == null) {
-      setMemoryForMapTask(vmem / (1024 * 1024)); //Changing bytes to mb
-      setMemoryForReduceTask(vmem / (1024 * 1024));//Changing bytes to mb
-    }else{
-      this.setLong(JobConf.MAPRED_TASK_MAXVMEM_PROPERTY,vmem);
-    }
-  }
-
-  /**
-   * @deprecated this variable is deprecated and nolonger in use.
-   */
-  @Deprecated
-  public long getMaxPhysicalMemoryForTask() {
-    LOG.warn("The API getMaxPhysicalMemoryForTask() is deprecated."
-              + " Refer to the APIs getMemoryForMapTask() and"
-              + " getMemoryForReduceTask() for details.");
-    return -1;
-  }
-
-  /*
-   * @deprecated this
-   */
-  @Deprecated
-  public void setMaxPhysicalMemoryForTask(long mem) {
-    LOG.warn("The API setMaxPhysicalMemoryForTask() is deprecated."
-        + " The value set is ignored. Refer to "
-        + " setMemoryForMapTask() and setMemoryForReduceTask() for details.");
-  }
-
-  static String deprecatedString(String key) {
-    return "The variable " + key + " is no longer used.";
-  }
-
-  private void checkAndWarnDeprecation() {
-    if(get(JobConf.MAPRED_TASK_MAXVMEM_PROPERTY) != null) {
-      LOG.warn(JobConf.deprecatedString(JobConf.MAPRED_TASK_MAXVMEM_PROPERTY)
-                + " Instead use " + JobConf.MAPRED_JOB_MAP_MEMORY_MB_PROPERTY
-                + " and " + JobConf.MAPRED_JOB_REDUCE_MEMORY_MB_PROPERTY);
-    }
-  }
-  
-
 }
 
