@@ -22,7 +22,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -31,12 +30,11 @@ import java.util.TreeSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.io.BytesWritable;
+import org.apache.hadoop.mapred.JobClient.RawSplit;
 import org.apache.hadoop.mapred.JobInProgress.DataStatistics;
 import org.apache.hadoop.mapred.SortedRanges.Range;
 import org.apache.hadoop.mapreduce.TaskType;
-import org.apache.hadoop.mapreduce.jobhistory.JobHistory;
-import org.apache.hadoop.mapreduce.jobhistory.TaskUpdatedEvent;
-import org.apache.hadoop.mapreduce.split.JobSplit.TaskSplitMetaInfo;
 import org.apache.hadoop.net.Node;
 
 
@@ -64,14 +62,12 @@ class TaskInProgress {
 
   // Defines the TIP
   private String jobFile = null;
-  private TaskSplitMetaInfo splitInfo;
+  private RawSplit rawSplit;
   private int numMaps;
   private int partition;
   private JobTracker jobtracker;
-  private JobHistory jobHistory;
   private TaskID id;
   private JobInProgress job;
-  private final int numSlotsRequired;
 
   // Status of the TIP
   private int successEventNumber = -1;
@@ -80,7 +76,7 @@ class TaskInProgress {
   private double progress = 0;
   private double oldProgressRate;
   private String state = "";
-  private long lastDispatchTime = 0;   // most recent time task attempt given to TT
+  private long dispatchTime = 0;   // most recent time task attempt given to TT
   private long execStartTime = 0;  // when we started first task-attempt
   private long execFinishTime = 0;
   private int completes = 0;
@@ -112,7 +108,7 @@ class TaskInProgress {
   /**
    * Map from taskId -> TaskStatus
    */
-  TreeMap<TaskAttemptID,TaskStatus> taskStatuses = 
+  private TreeMap<TaskAttemptID,TaskStatus> taskStatuses = 
     new TreeMap<TaskAttemptID,TaskStatus>();
 
   // Map from taskId -> TaskTracker Id, 
@@ -131,34 +127,23 @@ class TaskInProgress {
   
   private Counters counters = new Counters();
   
-  private HashMap<TaskAttemptID, Long> dispatchTimeMap = 
-    new HashMap<TaskAttemptID, Long>();
-  
-  private String user;
-  
 
   /**
    * Constructor for MapTask
    */
   public TaskInProgress(JobID jobid, String jobFile, 
-                        TaskSplitMetaInfo split, 
+                        RawSplit rawSplit, 
                         JobTracker jobtracker, JobConf conf, 
-                        JobInProgress job, int partition,
-                        int numSlotsRequired) {
+                        JobInProgress job, int partition) {
     this.jobFile = jobFile;
-    this.splitInfo = split;
+    this.rawSplit = rawSplit;
     this.jobtracker = jobtracker;
     this.job = job;
     this.conf = conf;
     this.partition = partition;
     this.maxSkipRecords = SkipBadRecords.getMapperMaxSkipRecords(conf);
-    this.numSlotsRequired = numSlotsRequired;
     setMaxTaskAttempts();
     init(jobid);
-    if (jobtracker != null) {
-      this.jobHistory = jobtracker.getJobHistory();
-    }
-    this.user = job.getUser();
   }
         
   /**
@@ -167,7 +152,7 @@ class TaskInProgress {
   public TaskInProgress(JobID jobid, String jobFile, 
                         int numMaps, 
                         int partition, JobTracker jobtracker, JobConf conf,
-                        JobInProgress job, int numSlotsRequired) {
+                        JobInProgress job) {
     this.jobFile = jobFile;
     this.numMaps = numMaps;
     this.partition = partition;
@@ -175,13 +160,8 @@ class TaskInProgress {
     this.job = job;
     this.conf = conf;
     this.maxSkipRecords = SkipBadRecords.getReducerMaxSkipGroups(conf);
-    this.numSlotsRequired = numSlotsRequired;
     setMaxTaskAttempts();
     init(jobid);
-    if (jobtracker != null) {
-      this.jobHistory = jobtracker.getJobHistory();
-    }
-    this.user = job.getUser();
   }
   
   /**
@@ -215,7 +195,7 @@ class TaskInProgress {
   public boolean isJobSetupTask() {
     return jobSetup;
   }
-	  
+    
   public void setJobSetupTask() {
     jobSetup = true;
   }
@@ -253,24 +233,15 @@ class TaskInProgress {
   /**
    * Return the dispatch time
    */
-  public long getDispatchTime(TaskAttemptID taskid){
-    Long l = dispatchTimeMap.get(taskid);
-    if (l != null) {
-      return l.longValue();
-    }
-    return 0;
-  }
-
-  public long getLastDispatchTime(){
-    return this.lastDispatchTime;
+  public long getDispatchTime(){
+    return this.dispatchTime;
   }
   
   /**
    * Set the dispatch time
    */
-  public void setDispatchTime(TaskAttemptID taskid, long disTime){
-    dispatchTimeMap.put(taskid, disTime);
-    this.lastDispatchTime = disTime;
+  public void setDispatchTime(long disTime){
+    this.dispatchTime = disTime;
   }
   
   /**
@@ -299,8 +270,7 @@ class TaskInProgress {
    */
   public void setExecFinishTime(long finishTime) {
     execFinishTime = finishTime;
-    TaskUpdatedEvent tue = new TaskUpdatedEvent(id, execFinishTime);
-    jobHistory.logEvent(tue, id.getJobID());
+    JobHistory.Task.logUpdates(id, execFinishTime); // log the update
   }
   
   /**
@@ -319,35 +289,9 @@ class TaskInProgress {
    * Whether this is a map task
    */
   public boolean isMapTask() {
-    return splitInfo != null;
+    return rawSplit != null;
   }
     
-  /**
-   * Returns the {@link TaskType} of the {@link TaskAttemptID} passed. 
-   * The type of an attempt is determined by the nature of the task and not its 
-   * id. 
-   * For example,
-   * - Attempt 'attempt_123_01_m_01_0' might be a job-setup task even though it 
-   *   has a _m_ in its id. Hence the task type of this attempt is JOB_SETUP 
-   *   instead of MAP.
-   * - Similarly reduce attempt 'attempt_123_01_r_01_0' might have failed and is
-   *   now supposed to do the task-level cleanup. In such a case this attempt 
-   *   will be of type TASK_CLEANUP instead of REDUCE.
-   */
-  TaskType getAttemptType (TaskAttemptID id) {
-    if (isCleanupAttempt(id)) {
-      return TaskType.TASK_CLEANUP;
-    } else if (isJobSetupTask()) {
-      return TaskType.JOB_SETUP;
-    } else if (isJobCleanupTask()) {
-      return TaskType.JOB_CLEANUP;
-    } else if (isMapTask()) {
-      return TaskType.MAP;
-    } else {
-      return TaskType.REDUCE;
-    }
-  }
-  
   /**
    * Is the Task associated with taskid is the first attempt of the tip? 
    * @param taskId
@@ -364,15 +308,6 @@ class TaskInProgress {
   public boolean isRunning() {
     return !activeTasks.isEmpty();
   }
-
-  /**
-   * Is this TaskAttemptid running
-   * @param taskId
-   * @return true if taskId attempt is running.
-   */
-  boolean isAttemptRunning(TaskAttemptID taskId) {
-    return activeTasks.containsKey(taskId);
-  }
     
   TaskAttemptID getSuccessfulTaskid() {
     return successfulTaskId;
@@ -385,14 +320,7 @@ class TaskInProgress {
   private void resetSuccessfulTaskid() {
     this.successfulTaskId = null; 
   }
-
-  String getUser() {
-    return user;
-  }
   
-  void setUser(String user) {
-    this.user = user;
-  }
   /**
    * Is this tip complete?
    * 
@@ -579,16 +507,15 @@ class TaskInProgress {
    * A status message from a client has arrived.
    * It updates the status of a single component-thread-task,
    * which might result in an overall TaskInProgress status update.
-   * @return has the task changed its state noticeably?
+   * @return has the task changed its state noticably?
    */
   synchronized boolean updateStatus(TaskStatus status) {
     TaskAttemptID taskid = status.getTaskID();
-    String tracker = status.getTaskTracker();
     String diagInfo = status.getDiagnosticInfo();
     TaskStatus oldStatus = taskStatuses.get(taskid);
     boolean changed = true;
     if (diagInfo != null && diagInfo.length() > 0) {
-      LOG.info("Error from " + taskid + " on " +  tracker + ": "+ diagInfo);
+      LOG.info("Error from "+taskid+": "+diagInfo);
       addDiagnosticInfo(taskid, diagInfo);
     }
     
@@ -611,9 +538,7 @@ class TaskInProgress {
            newState != TaskStatus.State.UNASSIGNED) && 
           (oldState == newState)) {
         LOG.warn("Recieved duplicate status update of '" + newState + 
-                 "' for '" + taskid + "' of TIP '" + getTIPId() + "'" +
-                 "oldTT=" + oldStatus.getTaskTracker() + 
-                 " while newTT=" + status.getTaskTracker());
+                 "' for '" + taskid + "' of TIP '" + getTIPId() + "'");
         return false;
       }
 
@@ -639,7 +564,7 @@ class TaskInProgress {
       if (oldState == TaskStatus.State.FAILED ||
           oldState == TaskStatus.State.KILLED) {
         tasksToKill.put(taskid, true);
-        return false;	  
+        return false;   
       }
           
       changed = oldState != newState;
@@ -650,10 +575,9 @@ class TaskInProgress {
     // but finishTime has to be updated.
     if (!isCleanupAttempt(taskid)) {
       taskStatuses.put(taskid, status);
-      //we don't want to include setup tasks in the task execution stats
-      if (!isJobSetupTask() && ((isMapTask() && job.hasSpeculativeMaps()) || 
-          (!isMapTask() && job.hasSpeculativeReduces()))) {
-        long now = JobTracker.getClock().getTime();
+      if ((isMapTask() && job.hasSpeculativeMaps()) || 
+          (!isMapTask() && job.hasSpeculativeReduces())) {
+        long now = jobtracker.getClock().getTime();
         double oldProgRate = getOldProgressRate();
         double currProgRate = getCurrentProgressRate(now);
         job.updateStatistics(oldProgRate, currProgRate, isMapTask());
@@ -719,7 +643,7 @@ class TaskInProgress {
 
       // tasktracker went down and failed time was not reported. 
       if (0 == status.getFinishTime()){
-        status.setFinishTime(JobTracker.getClock().getTime());
+        status.setFinishTime(jobtracker.getClock().getTime());
       }
     }
 
@@ -743,12 +667,6 @@ class TaskInProgress {
     if (tasks.contains(taskid)) {
       if (taskState == TaskStatus.State.FAILED) {
         numTaskFailures++;
-        if (isMapTask()) {
-          jobtracker.getInstrumentation().failedMap(taskid);
-        } else {
-          jobtracker.getInstrumentation().failedReduce(taskid);
-        }
-        
         machinesWhereFailed.add(trackerHostName);
         if(maxSkipRecords>0) {
           //skipping feature enabled
@@ -759,11 +677,6 @@ class TaskInProgress {
 
       } else if (taskState == TaskStatus.State.KILLED) {
         numKilledTasks++;
-        if (isMapTask()) {
-            jobtracker.getInstrumentation().killedMap(taskid);
-          } else {
-            jobtracker.getInstrumentation().killedReduce(taskid);
-          }
       }
     }
 
@@ -834,7 +747,7 @@ class TaskInProgress {
     //
 
     this.completes++;
-    this.execFinishTime = JobTracker.getClock().getTime();
+    this.execFinishTime = jobtracker.getClock().getTime();
     recomputeProgress();
     
   }
@@ -844,7 +757,7 @@ class TaskInProgress {
    */
   public String[] getSplitLocations() {
     if (isMapTask() && !jobSetup && !jobCleanup) {
-      return splitInfo.getLocations();
+      return rawSplit.getLocations();
     }
     return new String[0];
   }
@@ -856,13 +769,6 @@ class TaskInProgress {
     return taskStatuses.values().toArray(new TaskStatus[taskStatuses.size()]);
   }
 
-  /**
-   * Get all the {@link TaskAttemptID}s in this {@link TaskInProgress}
-   */
-  TaskAttemptID[] getAllTaskAttemptIDs() {
-    return tasks.toArray(new TaskAttemptID[tasks.size()]);
-  }
-  
   /**
    * Get the status of the specified task
    * @param taskid
@@ -880,7 +786,7 @@ class TaskInProgress {
     }
     this.failed = true;
     killed = true;
-    this.execFinishTime = JobTracker.getClock().getTime();
+    this.execFinishTime = jobtracker.getClock().getTime();
     recomputeProgress();
   }
 
@@ -984,17 +890,25 @@ class TaskInProgress {
    * Added for use by queue scheduling algorithms.
    * @param currentTime 
    */
-  boolean canBeSpeculated(long currentTime) {
+  boolean canBeSpeculated(long currentTime) { //EDITHUEHUE
     DataStatistics taskStats = job.getRunningTaskStatistics(isMapTask());
+    LOG.info("Can it be speculated??");//Change by Kartik
     if (LOG.isDebugEnabled()) {
-      LOG.debug("activeTasks.size(): " + activeTasks.size() + " "
+      LOG.info("activeTasks.size(): " + activeTasks.size() + " "
           + activeTasks.firstKey() + " task's progressrate: " + 
           getCurrentProgressRate(currentTime) + 
           " taskStats : " + taskStats);
     }
+    //LOG.info(completes == 0);
+    //LOG.info(!skipping && isRunnable() && isRunning());
+    //LOG.info(currentTime - dispatchTime >= SPECULATIVE_LAG);
+    //LOG.info( (taskStats.mean() - getCurrentProgressRate(currentTime) >
+    //          taskStats.std() * job.getSlowTaskThreshold()) );
+    LOG.info("Returning from canbespeculated()");
+    //return true; // Changed. uncomment if and return
     return (!skipping && isRunnable() && isRunning() &&
         activeTasks.size() <= MAX_TASK_EXECS &&
-        currentTime - lastDispatchTime >= SPECULATIVE_LAG &&
+        currentTime - dispatchTime >= SPECULATIVE_LAG &&
         completes == 0 && !isOnlyCommitPending() &&
         (taskStats.mean() - getCurrentProgressRate(currentTime) >
               taskStats.std() * job.getSlowTaskThreshold()));
@@ -1027,13 +941,13 @@ class TaskInProgress {
 
     //keep track of the last time we started an attempt at this TIP
     //used to calculate the progress rate of this TIP
-    setDispatchTime(taskid, JobTracker.getClock().getTime());
+    setDispatchTime(jobtracker.getClock().getTime());
  
     //set this the first time we run a taskAttempt in this TIP
     //each Task attempt has its own TaskStatus, which tracks that
     //attempts execStartTime, thus this startTime is TIP wide.
     if (0 == execStartTime){
-      setExecStartTime(lastDispatchTime);
+      setExecStartTime(dispatchTime);
     }
     return addRunningTask(taskid, taskTracker);
   }
@@ -1049,17 +963,22 @@ class TaskInProgress {
   public Task addRunningTask(TaskAttemptID taskid, 
                              String taskTracker,
                              boolean taskCleanup) {
-    // 1 slot is enough for taskCleanup task
-    int numSlotsNeeded = taskCleanup ? 1 : numSlotsRequired;
     // create the task
     Task t = null;
     if (isMapTask()) {
       LOG.debug("attempt " + numTaskFailures + " sending skippedRecords "
           + failedRanges.getIndicesCount());
-      t = new MapTask(jobFile, taskid, partition, splitInfo.getSplitIndex(),
-          numSlotsNeeded);
+      String splitClass = null;
+      BytesWritable split;
+      if (!jobSetup && !jobCleanup) {
+        splitClass = rawSplit.getClassName();
+        split = rawSplit.getBytes();
+      } else {
+        split = new BytesWritable();
+      }
+      t = new MapTask(jobFile, taskid, partition, splitClass, split);
     } else {
-      t = new ReduceTask(jobFile, taskid, partition, numMaps, numSlotsNeeded);
+      t = new ReduceTask(jobFile, taskid, partition, numMaps);
     }
     if (jobCleanup) {
       t.setJobCleanupTask();
@@ -1073,7 +992,6 @@ class TaskInProgress {
       cleanupTasks.put(taskid, taskTracker);
     }
     t.setConf(conf);
-    t.setUser(getUser());
     LOG.debug("Launching task with skipRanges:"+failedRanges.getSkipRanges());
     t.setSkipRanges(failedRanges.getSkipRanges());
     t.setSkipping(skipping);
@@ -1171,7 +1089,7 @@ class TaskInProgress {
     if (!isMapTask() || jobSetup || jobCleanup) {
       return "";
     }
-    String[] splits = splitInfo.getLocations();
+    String[] splits = rawSplit.getLocations();
     Node[] nodes = new Node[splits.length];
     for (int i = 0; i < splits.length; i++) {
       nodes[i] = jobtracker.getNode(splits[i]);
@@ -1201,10 +1119,14 @@ class TaskInProgress {
 
   public long getMapInputSize() {
     if(isMapTask() && !jobSetup && !jobCleanup) {
-      return splitInfo.getInputDataLength();
+      return rawSplit.getDataLength();
     } else {
       return 0;
     }
+  }
+  
+  public void clearSplit() {
+    rawSplit.clearBytes();
   }
   
   /**
@@ -1218,16 +1140,15 @@ class TaskInProgress {
   public double getCurrentProgressRate(long currentTime) {
     double bestProgressRate = 0;
     for (TaskStatus ts : taskStatuses.values()){
-      if (ts.getRunState() == TaskStatus.State.RUNNING  || 
-          ts.getRunState() == TaskStatus.State.SUCCEEDED ||
-          ts.getRunState() == TaskStatus.State.COMMIT_PENDING) {
-        double progressRate = ts.getProgress()/Math.max(1,
-            currentTime - getDispatchTime(ts.getTaskID()));
-        if (progressRate > bestProgressRate){
-          bestProgressRate = progressRate;
-        }
+      double progressRate = ts.getProgress()/Math.max(1,
+          currentTime - dispatchTime);
+      if ((ts.getRunState() == TaskStatus.State.RUNNING  || 
+          ts.getRunState() == TaskStatus.State.SUCCEEDED) &&
+          progressRate > bestProgressRate){
+        bestProgressRate = progressRate;
       }
     }
+    LOG.info("Returning the best progress rate = " + bestProgressRate);//Change by Kartik
     return bestProgressRate;
   }
   
@@ -1333,9 +1254,5 @@ class TaskInProgress {
 
   TreeMap<TaskAttemptID, String> getActiveTasks() {
     return activeTasks;
-  }
-
-  int getNumSlotsRequired() {
-    return numSlotsRequired;
   }
 }
